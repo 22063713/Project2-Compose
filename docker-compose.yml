@@ -1,0 +1,55 @@
+version: "3.8"
+
+# Project 2 — Jenkins + DinD CI
+# Named volumes:
+# - jenkins-data : persists Jenkins home (jobs/plugins/users)
+# - docker-data  : persists Docker image layer cache inside DinD
+
+services:
+  # --- Docker-in-Docker daemon (remote Docker host for Jenkins) ---
+  dind:
+    image: docker:24-dind
+    privileged: true
+    command:
+      - "--host=tcp://0.0.0.0:2375"
+      - "--storage-driver=overlay2"
+    environment:
+      DOCKER_TLS_CERTDIR: ""              # disable TLS (OK for a lab)
+    volumes:
+      - docker-data:/var/lib/docker       # (iii) layer cache
+    networks:
+      - jenkins
+    healthcheck:
+      test: ["CMD", "docker", "info"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # --- Jenkins controller (uses DinD as its Docker host) ---
+  jenkins:
+    image: jenkins/jenkins:lts-jdk11
+    user: root
+    depends_on:
+      dind:
+        condition: service_healthy        # wait until DinD is ready
+    ports:
+      - "8080:8080"                       # Jenkins UI
+      - "50000:50000"                     # inbound agents 
+    environment:
+      DOCKER_HOST: tcp://dind:2375        # (ii) Jenkins talks to DinD over TCP
+    volumes:
+      - jenkins-data:/var/jenkins_home    # (iii) Jenkins home persists
+      - /usr/bin/docker:/usr/bin/docker:ro  # provide Docker CLI to controller
+      # - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - jenkins
+    restart: unless-stopped
+
+# Shared network so jenkins can reach dind by name.
+networks:
+  jenkins:
+
+# Named volumes
+volumes:
+  jenkins-data:
+  docker-data:
